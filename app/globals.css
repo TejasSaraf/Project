@@ -55,9 +55,19 @@
     "Helvetica Neue", sans-serif;
 }
 
+/* Apple System Font Configuration */
+@layer base {
+  :root {
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+      "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+}
+
 html,
 body {
-  font-family: "SF-Pro-Text", var(--font-system-fallback);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 @tailwind base;
@@ -244,7 +254,23 @@ body {
   }
 }
 
-.primary-graidient-text {
+.primary-gradient-text {
+  background-image: linear-gradient(90deg, #00c2ff, #c46ffb);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  display: inline-block;
+}
+
+.secondary-gradient-text {
+  background-image: linear-gradient(90deg, #87e4ff, #e0afff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  display: inline-block;
+}
+
+.third-graidient-text {
   background-image: linear-gradient(
     90deg,
     #00c2ff 0.08%,
@@ -252,6 +278,17 @@ body {
     #fcf9f8 66%,
     #c46ffb
   );
+}
+
+.background {
+  background: #f7fafc;
+}
+
+.gradient-background {
+  background-image: linear-gradient(135deg, #87e4ff, #e0afff);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 .main-heading {
