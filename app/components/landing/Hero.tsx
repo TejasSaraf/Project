@@ -20,7 +20,7 @@ const Hero = () => {
 
           <h1 className="text-5xl md:text-7xl font-bold text-white mb-6 leading-tight">
             Stop Writing
-            <span className="primary-graidient-text bg-clip-text text-transparent">
+            <span className="third-graidient-text bg-clip-text text-transparent">
               {" "}
               JIRA Tickets
             </span>

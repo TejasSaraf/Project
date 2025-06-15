@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Flick - AI-Powered JIRA Automation",
+  title: "Sprint - AI-Powered JIRA Automation",
   description:
     "Transform your JIRA workflow with AI-powered ticket creation and management",
 };
