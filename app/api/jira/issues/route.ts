@@ -110,7 +110,7 @@ export async function GET(request: Request) {
         params: {
           jql: `project = ${projectKey}`,
           maxResults: 50,
-          fields: "summary,description,status,assignee,priority",
+          fields: "summary,description,status,assignee,priority,created",
         },
       }
     );

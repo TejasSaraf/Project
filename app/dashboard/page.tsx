@@ -6,7 +6,9 @@ import { useSearchParams } from "next/navigation";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { ArrowLeft, ExternalLink, Plus } from "lucide-react";
-import TicketGenerator from "app/components/TicketGenerator";
+import StoryGenerator from "app/components/StoryGenerator";
+import ProjectCard from "app/components/ProjectCard";
+import IssueCard from "app/components/IssueCard";
 
 interface JiraProject {
   id: string;
@@ -14,6 +16,7 @@ interface JiraProject {
   name: string;
   jiraBaseUrl: string;
   accessToken: string;
+  issueCount?: number;
 }
 
 interface JiraIssue {
@@ -31,79 +34,9 @@ interface JiraIssue {
     priority: {
       name: string;
     };
+    created: string;
   };
 }
-
-const ProjectCard = ({
-  project,
-  onViewIssues,
-  onCreateTask,
-}: {
-  project: JiraProject;
-  onViewIssues: (project: JiraProject) => void;
-  onCreateTask: (project: JiraProject) => void;
-}) => (
-  <Card className="p-4">
-    <div className="flex justify-between items-start">
-      <div>
-        <h3 className="text-lg font-semibold mb-2">{project.name}</h3>
-        <p className="text-sm text-gray-600">Key: {project.key}</p>
-      </div>
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onViewIssues(project)}
-        >
-          View Issues
-        </Button>
-        <Button size="sm" onClick={() => onCreateTask(project)}>
-          <Plus className="w-4 h-4 mr-2" />
-          Create Task
-        </Button>
-      </div>
-    </div>
-  </Card>
-);
-
-const IssueCard = ({
-  issue,
-  jiraBaseUrl,
-}: {
-  issue: JiraIssue;
-  jiraBaseUrl: string;
-}) => (
-  <Card key={issue.id} className="p-4">
-    <div className="flex justify-between items-start">
-      <div>
-        <h3 className="text-lg font-semibold mb-2">
-          {issue.key}: {issue.fields.summary}
-        </h3>
-        <div className="space-y-2">
-          <p className="text-sm text-gray-600">
-            Status: {issue.fields.status.name}
-          </p>
-          <p className="text-sm text-gray-600">
-            Priority: {issue.fields.priority.name}
-          </p>
-          {issue.fields.assignee && (
-            <p className="text-sm text-gray-600">
-              Assignee: {issue.fields.assignee.displayName}
-            </p>
-          )}
-        </div>
-      </div>
-      <a
-        href={`${jiraBaseUrl}/browse/${issue.key}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-blue-600 hover:text-blue-800"
-      >
-        <ExternalLink className="w-5 h-5" />
-      </a>
-    </div>
-  </Card>
-);
 
 const ErrorMessage = ({
   message,
@@ -144,7 +77,31 @@ export default function DashboardPage() {
         const data = await response.json();
 
         if (response.ok) {
-          setProjects(data.values || []);
+          const projectsWithCounts = await Promise.all(
+            (data.values || []).map(async (project: JiraProject) => {
+              try {
+                const issuesResponse = await fetch(
+                  `/api/jira/issues?projectKey=${project.key}`
+                );
+                const issuesData = await issuesResponse.json();
+                return {
+                  ...project,
+                  issueCount: issuesData.issues?.length || 0,
+                };
+              } catch (err) {
+                console.error(
+                  `Error fetching issues for project ${project.key}:`,
+                  err
+                );
+                return {
+                  ...project,
+                  issueCount: 0,
+                };
+              }
+            })
+          );
+
+          setProjects(projectsWithCounts);
           setError(null);
         } else {
           if (
@@ -204,7 +161,7 @@ export default function DashboardPage() {
   };
 
   const renderProjectsList = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {projects.map((project) => (
         <ProjectCard
           key={project.id}
@@ -218,7 +175,11 @@ export default function DashboardPage() {
 
   const renderIssuesList = () => (
     <div>
-      <Button variant="ghost" className="mb-4" onClick={handleBackClick}>
+      <Button
+        variant="ghost"
+        className="mb-4 cursor-pointer"
+        onClick={handleBackClick}
+      >
         <ArrowLeft className="w-4 h-4 mr-2" />
         Back to Projects
       </Button>
@@ -232,7 +193,7 @@ export default function DashboardPage() {
       ) : issues.length === 0 ? (
         <p className="text-lg">No issues found for this project.</p>
       ) : (
-        <div className="grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {issues.map((issue) => (
             <IssueCard
               key={issue.id}
@@ -249,7 +210,7 @@ export default function DashboardPage() {
     <div>
       <Button
         variant="ghost"
-        className="mb-4"
+        className="mb-2 cursor-pointer"
         onClick={() => {
           setIsCreatingTask(false);
           setSelectedProject(null);
@@ -259,10 +220,10 @@ export default function DashboardPage() {
         Back to Projects
       </Button>
 
-      <h2 className="text-2xl font-semibold mb-4">
+      <h2 className="text-base font-semibold mb-2">
         Create Task for {selectedProject?.name}
       </h2>
-      <TicketGenerator
+      <StoryGenerator
         projectKey={selectedProject!.key}
         accessToken={selectedProject!.accessToken}
         jiraBaseUrl={selectedProject!.jiraBaseUrl}
@@ -271,7 +232,7 @@ export default function DashboardPage() {
   );
 
   return (
-    <div className="container mx-auto p-4">
+    <div className="container mx-auto p-8">
       {error && !urlError && (
         <div
           className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4"
