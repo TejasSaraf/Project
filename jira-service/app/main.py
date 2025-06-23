@@ -1,3 +1,4 @@
+from sprint_shared.aws.s3_service import S3Service
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -21,11 +22,26 @@ from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 from langchain_community.document_loaders.youtube import TranscriptFormat, YoutubeLoader
 import hashlib
+from datetime import datetime
+import sys
+sys.path.append('../../shared/src')
 
 load_dotenv()
 
+CHROMA_DB_PATH = "./chroma_db"
+CHROMA_PERSIST_DIRECTORY = "./croma"
+API_KEY_NAME = "X-API-Key"
+DEFAULT_CHUNK_SIZE = 1000
+DEFAULT_CHUNK_OVERLAP = 200
+DEFAULT_MAX_RESULTS = 50
+DEFAULT_YOUTUBE_CHUNK_SECONDS = 30
+DEFAULT_LLM_TEMPERATURE = 0.3
+DEFAULT_LLM_MAX_TOKENS = 1000
+DEFAULT_LLM_MODEL = "gpt-3.5-turbo"
+
 chroma_client = chromadb.PersistentClient(
-    path="./chroma_db", settings=Settings(anonymized_telemetry=False, allow_reset=True)
+    path=CHROMA_DB_PATH,
+    settings=Settings(anonymized_telemetry=False, allow_reset=True)
 )
 
 
@@ -43,7 +59,6 @@ class SecureEmbeddingFunction:
 
 
 def get_collection(access_token: str, project_key: str):
-    """Get or create a secure collection for the project"""
     collection_name = (
         f"project_{project_key}_{hashlib.sha256(access_token.encode()).hexdigest()[:8]}"
     )
@@ -65,39 +80,40 @@ def get_collection(access_token: str, project_key: str):
 def fetch_project_context(
     project_key: str, access_token: str, jira_base_url: str
 ) -> List[Document]:
-    """Fetch project context from Jira API using OAuth access token"""
-    headers = {"Accept": "application/json", "Authorization": f"Bearer {access_token}"}
+    headers = {"Accept": "application/json",
+               "Authorization": f"Bearer {access_token}"}
 
     project_url = f"{jira_base_url}/rest/api/3/project/{project_key}"
     project_response = requests.get(project_url, headers=headers)
     project_data = project_response.json()
 
-    jql = f"project = {project_key} ORDER BY created DESC"
+    jql_query = f"project = {project_key} ORDER BY created DESC"
     issues_url = f"{jira_base_url}/rest/api/3/search"
     issues_response = requests.get(
-        issues_url, headers=headers, params={"jql": jql, "maxResults": 50}
+        issues_url, headers=headers, params={
+            "jql": jql_query, "maxResults": DEFAULT_MAX_RESULTS}
     )
     issues_data = issues_response.json()
 
     documents = []
 
-    project_doc = f"""
+    project_document = f"""
     Project: {project_data['name']}
     Key: {project_data['key']}
     Description: {project_data.get('description', 'No description')}
     Project Type: {project_data.get('projectTypeKey', 'Unknown')}
     """
-    documents.append(Document(page_content=project_doc))
+    documents.append(Document(page_content=project_document))
 
     for issue in issues_data.get("issues", []):
-        issue_doc = f"""
+        issue_document = f"""
         Issue: {issue['key']}
         Summary: {issue['fields']['summary']}
         Description: {issue['fields'].get('description', 'No description')}
         Status: {issue['fields']['status']['name']}
         Priority: {issue['fields']['priority']['name']}
         """
-        documents.append(Document(page_content=issue_doc))
+        documents.append(Document(page_content=issue_document))
 
     return documents
 
@@ -133,16 +149,16 @@ app.add_middleware(
 
 embeddings = OpenAIEmbeddings()
 llm = ChatOpenAI(
-    model_name="gpt-3.5-turbo",
-    temperature=0.3,
-    max_tokens=1000,
+    model_name=DEFAULT_LLM_MODEL,
+    temperature=DEFAULT_LLM_TEMPERATURE,
+    max_tokens=DEFAULT_LLM_MAX_TOKENS,
 )
 
 
 def load_and_process_documents(project_key: Optional[str] = None):
     documents = []
 
-    urls = [
+    default_urls = [
         "https://community.atlassian.com/forums/Jira-articles/How-to-write-a-useful-Jira-ticket/ba-p/2147004",
     ]
 
@@ -151,14 +167,14 @@ def load_and_process_documents(project_key: Optional[str] = None):
             "https://www.youtube.com/watch?v=iryX1Oa1cMQ",
             add_video_info=True,
             transcript_format=TranscriptFormat.CHUNKS,
-            chunk_size_seconds=30,
+            chunk_size_seconds=DEFAULT_YOUTUBE_CHUNK_SECONDS,
         )
         documents.extend(youtube_loader.load())
     except Exception as e:
         print(f"Error loading YouTube transcript: {e}")
 
     try:
-        selenium_loader = SeleniumURLLoader(urls=urls)
+        selenium_loader = SeleniumURLLoader(urls=default_urls)
         documents.extend(selenium_loader.load())
     except Exception as e:
         print(f"Error loading web content: {e}")
@@ -171,14 +187,14 @@ def load_and_process_documents(project_key: Optional[str] = None):
             print(f"Error fetching project context: {e}")
 
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
+        chunk_size=DEFAULT_CHUNK_SIZE,
+        chunk_overlap=DEFAULT_CHUNK_OVERLAP,
         length_function=len,
     )
-    chunks = text_splitter.split_documents(documents)
+    document_chunks = text_splitter.split_documents(documents)
 
     vectorstore = Chroma.from_documents(
-        documents=chunks, embedding=embeddings, persist_directory="./croma"
+        documents=document_chunks, embedding=embeddings, persist_directory=CHROMA_PERSIST_DIRECTORY
     )
     vectorstore.persist()
 
@@ -186,11 +202,11 @@ def load_and_process_documents(project_key: Optional[str] = None):
 
 
 try:
-    vectorstore = Chroma(persist_directory="./croma", embedding_function=embeddings)
+    vectorstore = Chroma(persist_directory=CHROMA_PERSIST_DIRECTORY,
+                         embedding_function=embeddings)
 except:
     vectorstore = load_and_process_documents()
 
-API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
 
 
@@ -206,9 +222,12 @@ class TicketRequest(BaseModel):
     project_key: Optional[str] = None
     access_token: Optional[str] = None
     jira_base_url: Optional[str] = None
+    youtube_urls: Optional[List[str]] = None
+    web_urls: Optional[List[str]] = None
 
 
 class TicketResponse(BaseModel):
+    ticket_id: str
     title: str
     description: str
     priority: str
@@ -226,43 +245,123 @@ class LoadDocumentsRequest(BaseModel):
 @app.post("/generate-ticket", response_model=TicketResponse)
 async def generate_ticket(request: TicketRequest, api_key: str = Depends(get_api_key)):
     try:
+        s3_service = S3Service()
+
         if request.project_key and request.access_token and request.jira_base_url:
-            collection = get_collection(request.access_token, request.project_key)
+            collection = get_collection(
+                request.access_token, request.project_key)
 
             project_documents = fetch_project_context(
                 request.project_key, request.access_token, request.jira_base_url
             )
 
-            urls = [
-                "https://community.atlassian.com/forums/Jira-articles/How-to-write-a-useful-Jira-ticket/ba-p/2147004",
-            ]
-            loader = SeleniumURLLoader(urls=urls)
-            community_documents = loader.load()
+            documents = []
 
-            documents = community_documents + project_documents
+            documents.extend(project_documents)
+
+            if request.youtube_urls:
+                for url in request.youtube_urls:
+                    try:
+                        youtube_loader = YoutubeLoader.from_youtube_url(
+                            url,
+                            add_video_info=True,
+                            transcript_format=TranscriptFormat.CHUNKS,
+                            chunk_size_seconds=30,
+                        )
+                        documents.extend(youtube_loader.load())
+                        print(
+                            f"Successfully loaded YouTube transcript from: {url}")
+                    except Exception as e:
+                        print(
+                            f"Error loading YouTube transcript for {url}: {e}")
+
+            if request.web_urls:
+                try:
+                    selenium_loader = SeleniumURLLoader(urls=request.web_urls)
+                    web_documents = selenium_loader.load()
+                    documents.extend(web_documents)
+                    print(
+                        f"Successfully loaded {len(web_documents)} web documents")
+                except Exception as e:
+                    print(f"Error loading web content: {e}")
+
+            if not request.youtube_urls and not request.web_urls:
+                default_urls = [
+                    "https://community.atlassian.com/forums/Jira-articles/How-to-write-a-useful-Jira-ticket/ba-p/2147004",
+                ]
+                try:
+                    loader = SeleniumURLLoader(urls=default_urls)
+                    community_documents = loader.load()
+                    documents.extend(community_documents)
+                    print("Added default Jira community guidelines")
+                except Exception as e:
+                    print(f"Error loading default community guidelines: {e}")
 
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200,
+                chunk_size=DEFAULT_CHUNK_SIZE,
+                chunk_overlap=DEFAULT_CHUNK_OVERLAP,
                 length_function=len,
             )
-            chunks = text_splitter.split_documents(documents)
+            document_chunks = text_splitter.split_documents(documents)
 
             collection.add(
-                documents=[doc.page_content for doc in chunks],
+                documents=[
+                    document.page_content for document in document_chunks],
                 metadatas=[
-                    {"source": "jira", "project": request.project_key} for _ in chunks
+                    {
+                        "source": "jira" if "jira" in str(document.metadata) else "youtube" if "youtube" in str(document.metadata) else "web",
+                        "project": request.project_key
+                    } for document in document_chunks
                 ],
-                ids=[f"doc_{i}" for i in range(len(chunks))],
+                ids=[f"doc_{i}" for i in range(len(document_chunks))],
             )
 
-            results = collection.query(query_texts=[request.prompt], n_results=3)
+            results = collection.query(
+                query_texts=[request.prompt], n_results=5)
 
             context = "\n".join(results["documents"][0])
         else:
-            context = "Using general Jira ticket guidelines."
+            documents = []
 
-        trained_message = """Hello, you are an AI model trained specifically to generate a Jira ticket for a web application. I am a human operator who will be interacting with you to give you instructions and help support the application. 
+            if request.youtube_urls:
+                for url in request.youtube_urls:
+                    try:
+                        youtube_loader = YoutubeLoader.from_youtube_url(
+                            url,
+                            add_video_info=True,
+                            transcript_format=TranscriptFormat.CHUNKS,
+                            chunk_size_seconds=30,
+                        )
+                        documents.extend(youtube_loader.load())
+                        print(
+                            f"Successfully loaded YouTube transcript from: {url}")
+                    except Exception as e:
+                        print(
+                            f"Error loading YouTube transcript for {url}: {e}")
+
+            if request.web_urls:
+                try:
+                    selenium_loader = SeleniumURLLoader(urls=request.web_urls)
+                    web_documents = selenium_loader.load()
+                    documents.extend(web_documents)
+                    print(
+                        f"Successfully loaded {len(web_documents)} web documents")
+                except Exception as e:
+                    print(f"Error loading web content: {e}")
+
+            if documents:
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=DEFAULT_CHUNK_SIZE,
+                    chunk_overlap=DEFAULT_CHUNK_OVERLAP,
+                    length_function=len,
+                )
+                document_chunks = text_splitter.split_documents(documents)
+                context = "\n".join(
+                    [document.page_content for document in document_chunks])
+            else:
+                context = "Using general Jira ticket guidelines."
+
+        ai_prompt_template = """Hello, you are an AI model trained specifically to generate a Jira ticket for a web application. I am a human operator who will be interacting with you to give you instructions and help support the application. 
         You are now Sprint AI and you will be expected to do a variety of tasks such as web scrape information and generate jira issues.
         Your name is Sprint AI. 
 
@@ -296,37 +395,60 @@ async def generate_ticket(request: TicketRequest, api_key: str = Depends(get_api
         7. Choose an appropriate priority level
         8. Add relevant labels for categorization"""
 
-        prompt = ChatPromptTemplate.from_template(trained_message)
+        prompt_template = ChatPromptTemplate.from_template(ai_prompt_template)
 
         chain = (
             {"context": RunnablePassthrough(), "prompt": RunnablePassthrough()}
-            | prompt
+            | prompt_template
             | llm
         )
 
-        response = chain.invoke({"context": context, "prompt": request.prompt})
+        ai_response = chain.invoke(
+            {"context": context, "prompt": request.prompt})
 
         try:
-            ticket_data = json.loads(response.content)
+            parsed_ticket_data = json.loads(ai_response.content)
         except json.JSONDecodeError:
             import re
 
-            json_match = re.search(r"\{.*\}", response.content, re.DOTALL)
+            json_match = re.search(r"\{.*\}", ai_response.content, re.DOTALL)
             if json_match:
-                ticket_data = json.loads(json_match.group())
+                parsed_ticket_data = json.loads(json_match.group())
             else:
                 raise HTTPException(
                     status_code=500, detail="Failed to parse ticket data from response"
                 )
 
-        return TicketResponse(
-            title=ticket_data.get("title", "Untitled"),
-            description=ticket_data.get("description", "No description provided"),
-            priority=ticket_data.get("priority", "Medium"),
-            labels=ticket_data.get("labels", []),
-        )
+        ticket_id = hashlib.sha256(
+            f"{request.prompt}{request.project_key}".encode()).hexdigest()[:12]
+
+        final_ticket_data = {
+            "ticket_id": ticket_id,
+            "title": parsed_ticket_data.get("title", "Untitled"),
+            "description": parsed_ticket_data.get("description", "No description provided"),
+            "priority": parsed_ticket_data.get("priority", "Medium"),
+            "labels": parsed_ticket_data.get("labels", []),
+            "project_key": request.project_key,
+            "created_at": datetime.utcnow().isoformat()
+        }
+
+        if not s3_service.store_ticket(ticket_id, final_ticket_data, service_type='jira'):
+            print(f"Failed to store ticket {ticket_id} in S3")
+            raise HTTPException(
+                status_code=500, detail="Failed to store ticket in S3")
+
+        stored_ticket = s3_service.get_ticket(ticket_id, service_type='jira')
+        if not stored_ticket:
+            print(f"Failed to verify ticket {ticket_id} in S3")
+            raise HTTPException(
+                status_code=500, detail="Failed to verify ticket storage in S3")
+        print(f"Verified ticket {ticket_id} stored in S3")
+
+        print(f"Successfully stored ticket {ticket_id} in S3")
+        return TicketResponse(**final_ticket_data)
 
     except Exception as e:
+        print(f"Error in generate_ticket: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -344,7 +466,7 @@ async def load_documents(
                         url,
                         add_video_info=True,
                         transcript_format=TranscriptFormat.CHUNKS,
-                        chunk_size_seconds=30,
+                        chunk_size_seconds=DEFAULT_YOUTUBE_CHUNK_SECONDS,
                     )
                     documents.extend(youtube_loader.load())
                 except Exception as e:
@@ -372,11 +494,11 @@ async def load_documents(
             )
 
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
+            chunk_size=DEFAULT_CHUNK_SIZE,
+            chunk_overlap=DEFAULT_CHUNK_OVERLAP,
             length_function=len,
         )
-        chunks = text_splitter.split_documents(documents)
+        document_chunks = text_splitter.split_documents(documents)
 
         collection = (
             get_collection(request.access_token, request.project_key)
@@ -386,30 +508,31 @@ async def load_documents(
 
         if collection:
             collection.add(
-                documents=[doc.page_content for doc in chunks],
+                documents=[
+                    document.page_content for document in document_chunks],
                 metadatas=[
                     {
                         "source": "custom",
                         "project": request.project_key,
-                        "type": "youtube" if "youtube" in str(doc.metadata) else "web",
+                        "type": "youtube" if "youtube" in str(document.metadata) else "web",
                     }
-                    for doc in chunks
+                    for document in document_chunks
                 ],
                 ids=[
-                    f"doc_{hashlib.sha256(doc.page_content.encode()).hexdigest()[:8]}"
-                    for doc in chunks
+                    f"doc_{hashlib.sha256(document.page_content.encode()).hexdigest()[:8]}"
+                    for document in document_chunks
                 ],
             )
         else:
             vectorstore = Chroma.from_documents(
-                documents=chunks, embedding=embeddings, persist_directory="./croma"
+                documents=document_chunks, embedding=embeddings, persist_directory=CHROMA_PERSIST_DIRECTORY
             )
             vectorstore.persist()
 
         return {
             "status": "success",
-            "message": f"Successfully loaded {len(chunks)} document chunks",
-            "chunks_loaded": len(chunks),
+            "message": f"Successfully loaded {len(document_chunks)} document chunks",
+            "chunks_loaded": len(document_chunks),
         }
 
     except Exception as e:
@@ -419,3 +542,38 @@ async def load_documents(
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/tickets/{ticket_id}", response_model=TicketResponse)
+async def get_ticket(ticket_id: str, api_key: str = Depends(get_api_key)):
+    try:
+        s3_service = S3Service()
+        ticket_data = s3_service.get_ticket(ticket_id, service_type='jira')
+
+        if not ticket_data:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        return TicketResponse(**ticket_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/tickets", response_model=List[TicketResponse])
+async def list_tickets(api_key: str = Depends(get_api_key)):
+    try:
+        s3_service = S3Service()
+        tickets = s3_service.list_tickets(service_type='jira')
+        return [TicketResponse(**ticket) for ticket in tickets]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/tickets/{ticket_id}")
+async def delete_ticket(ticket_id: str, api_key: str = Depends(get_api_key)):
+    try:
+        s3_service = S3Service()
+        if not s3_service.delete_ticket(ticket_id, service_type='jira'):
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        return {"message": "Ticket deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

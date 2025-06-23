@@ -12,4 +12,5 @@ langchain-openai
 langchain-chroma
 langchain-community
 selenium
-webdriver-manager 
+webdriver-manager
+boto3 
