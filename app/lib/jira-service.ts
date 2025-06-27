@@ -13,6 +13,15 @@ export class JiraServiceError extends Error {
   }
 }
 
+// Get the API Gateway URL from environment variables
+const getApiGatewayUrl = (): string => {
+  const url = process.env.NEXT_PUBLIC_API_GATEWAY_URL;
+  if (!url) {
+    throw new Error("API Gateway URL not configured. Please set NEXT_PUBLIC_API_GATEWAY_URL environment variable.");
+  }
+  return url;
+};
+
 export async function generateTicket(
   prompt: string,
   context: string[] = [],
@@ -23,7 +32,9 @@ export async function generateTicket(
   webUrls?: string[]
 ): Promise<TicketResponse> {
   try {
-    const response = await fetch("/api/jiraserviceconnection", {
+    const apiGatewayUrl = getApiGatewayUrl();
+    
+    const response = await fetch(`${apiGatewayUrl}/generate-ticket`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -73,7 +84,8 @@ export async function generateTicketWithYouTube(
     projectKey,
     accessToken,
     jiraBaseUrl,
-    youtubeUrls
+    youtubeUrls,
+    undefined
   );
 }
 
