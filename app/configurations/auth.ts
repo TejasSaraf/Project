@@ -9,8 +9,29 @@ import { compare } from "bcrypt";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(db),
+  session: {
+    strategy: "jwt",
+  },
   pages: {
     signIn: "/signin",
+  },
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) {
+        token.id = user.id;
+        token.name = user.name;
+        token.email = user.email;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (token) {
+        session.user.id = token.id as string;
+        session.user.name = token.name as string;
+        session.user.email = token.email as string;
+      }
+      return session;
+    },
   },
   providers: [
     Google({
@@ -74,6 +95,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return {
             id: existingUser.id,
             email: existingUser.email,
+            name: existingUser.name,
           };
         } catch (error) {
           return null;
