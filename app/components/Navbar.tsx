@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,11 +12,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export default function Navbar() {
   const { data: session } = useSession();
   const router = useRouter();
+  const [imageError, setImageError] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
 
   const handleSignOut = async () => {
     await signOut({ redirect: false });
@@ -23,10 +25,36 @@ export default function Navbar() {
     router.push("/");
   };
 
+  const handleImageError = () => {
+    setImageError(true);
+    setImageLoaded(false);
+  };
+
+  const handleImageLoad = () => {
+    setImageLoaded(true);
+    setImageError(false);
+  };
+
+  const getUserInitials = () => {
+    if (!session?.user?.name) return "U";
+    const names = session.user.name.split(" ");
+    if (names.length >= 2) {
+      return `${names[0][0]}${names[1][0]}`.toUpperCase();
+    }
+    return names[0][0]?.toUpperCase() || "U";
+  };
+
+  useEffect(() => {
+    if (session?.user?.image) {
+      setImageError(false);
+      setImageLoaded(false);
+    }
+  }, [session?.user?.image]);
+
   return (
-    <nav className="bg-black">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+    <nav className={session ? "bg-[var(--icon-black-primary)]" : "bg-black"}>
+      <div className="mx-auto px-4 sm:px-8">
+        <div className="flex items-center justify-between h-24">
           <div className="flex items-center w-40">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -46,19 +74,28 @@ export default function Navbar() {
             {session ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button className="relative h-8 w-8 rounded-full">
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage
-                        src={session.user?.image || ""}
-                        alt={session.user?.name || ""}
+                  <div className="relative h-8 w-8 rounded-full overflow-hidden cursor-pointer hover:opacity-80 transition-opacity">
+                    {session.user?.image && !imageError ? (
+                      <Image
+                        className="h-8 w-8 rounded-full object-cover"
+                        src={session.user.image}
+                        alt={session.user.name || "User avatar"}
+                        onError={handleImageError}
+                        onLoad={handleImageLoad}
+                        priority
+                        fill
                       />
-                      <AvatarFallback>
-                        {session.user?.name?.[0] || "U"}
-                      </AvatarFallback>
-                    </Avatar>
-                  </Button>
+                    ) : null}
+                    {(!session.user?.image || imageError || !imageLoaded) && (
+                      <div className="absolute inset-0 h-8 w-8 rounded-full bg-orange-400 flex items-center justify-center text-white text-sm font-medium">
+                        {getUserInitials()}
+                      </div>
+                    )}
+                  </div>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+                <DropdownMenuContent className="w-100 h-100 bg-white border-none shadow-xl">
+                  <DropdownMenuItem>{session.user?.name}</DropdownMenuItem>
+                  <DropdownMenuItem>{session.user?.email}</DropdownMenuItem>
                   <DropdownMenuItem onClick={handleSignOut}>
                     Sign out
                   </DropdownMenuItem>
